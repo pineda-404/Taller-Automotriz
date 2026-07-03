@@ -1,0 +1,262 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+data:
+  nginx.conf: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        include       /etc/nginx/mime.types;
+        default_type  application/octet-stream;
+        sendfile        on;
+        keepalive_timeout 65;
+
+        server {
+            listen 8000;
+            server_name localhost;
+
+            # 1. Microservicio de Autenticación y Catálogos
+            location /api/auth/ {
+                proxy_pass http://auth-service-svc:8001;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            location /api/catalogos/ {
+                proxy_pass http://auth-service-svc:8001;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            # 2. Microservicio de Clientes
+            location /api/clientes/ {
+                proxy_pass http://cliente-service-svc:8002;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            # 3. Microservicio de Órdenes de Servicio (OST)
+            location /api/ost/ {
+                proxy_pass http://ost-service-svc:8003;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            # 4. Microservicio de Bitácora (NoSQL)
+            location /api/bitacora/ {
+                proxy_pass http://bitacora-service-svc:8004;
+                proxy_set_header Host $host;
+                proxy_set_header X-Real-IP $remote_addr;
+                proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            location / {
+                return 200 '{"message": "Taller Automotriz API Gateway Activo en Kubernetes"}';
+                add_header Content-Type application/json;
+            }
+        }
+    }
+---
+# ConfigMap de Variables de Entorno
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  DATABASE_URL: "postgresql+psycopg://postgres:postgres@db:5432/taller_db"
+  MONGO_URL: "mongodb://db_mongo:27017/taller_db"
+  SECRET_KEY: "taller_key_2026"
+  ALGORITHM: "HS256"
+  ACCESS_TOKEN_EXPIRE_MINUTES: "1440"
+---
+# 1. Microservicio Auth (Deployment + Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: auth-service
+  template:
+    metadata:
+      labels:
+        app: auth-service
+    spec:
+      containers:
+      - name: auth-service
+        image: 323336951806.dkr.ecr.us-east-1.amazonaws.com/taller-auth-service:latest
+        command: ["uvicorn", "app.main_auth:app", "--host", "0.0.0.0", "--port", "8001"]
+        ports:
+        - containerPort: 8001
+        envFrom:
+        - configMapRef:
+            name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service-svc
+spec:
+  selector:
+    app: auth-service
+  ports:
+  - port: 8001
+    targetPort: 8001
+---
+# 2. Microservicio Clientes (Deployment + Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cliente-service-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cliente-service
+  template:
+    metadata:
+      labels:
+        app: cliente-service
+    spec:
+      containers:
+      - name: cliente-service
+        image: 323336951806.dkr.ecr.us-east-1.amazonaws.com/taller-cliente-service:latest
+        command: ["uvicorn", "app.main_clientes:app", "--host", "0.0.0.0", "--port", "8002"]
+        ports:
+        - containerPort: 8002
+        envFrom:
+        - configMapRef:
+            name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cliente-service-svc
+spec:
+  selector:
+    app: cliente-service
+  ports:
+  - port: 8002
+    targetPort: 8002
+---
+# 3. Microservicio OST (Deployment + Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ost-service-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ost-service
+  template:
+    metadata:
+      labels:
+        app: ost-service
+    spec:
+      containers:
+      - name: ost-service
+        image: 323336951806.dkr.ecr.us-east-1.amazonaws.com/taller-ost-service:latest
+        command: ["uvicorn", "app.main_ost:app", "--host", "0.0.0.0", "--port", "8003"]
+        ports:
+        - containerPort: 8003
+        envFrom:
+        - configMapRef:
+            name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ost-service-svc
+spec:
+  selector:
+    app: ost-service
+  ports:
+  - port: 8003
+    targetPort: 8003
+---
+# 4. Microservicio Bitácora (Deployment + Service)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bitacora-service-deployment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: bitacora-service
+  template:
+    metadata:
+      labels:
+        app: bitacora-service
+    spec:
+      containers:
+      - name: bitacora-service
+        image: 323336951806.dkr.ecr.us-east-1.amazonaws.com/taller-bitacora-service:latest
+        command: ["uvicorn", "app.main_bitacora:app", "--host", "0.0.0.0", "--port", "8004"]
+        ports:
+        - containerPort: 8004
+        envFrom:
+        - configMapRef:
+            name: app-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bitacora-service-svc
+spec:
+  selector:
+    app: bitacora-service
+  ports:
+  - port: 8004
+    targetPort: 8004
+---
+# 5. Gateway Nginx (Deployment + Service LoadBalancer de AWS)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+      - name: gateway
+        image: nginx:alpine
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+        - name: nginx-config-volume
+          mountPath: /etc/nginx/nginx.conf
+          subPath: nginx.conf
+      volumes:
+      - name: nginx-config-volume
+        configMap:
+          name: nginx-config
+---
+# Service de tipo LoadBalancer (Aprovisiona automáticamente un AWS Load Balancer público)
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway-lb-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: gateway
+  ports:
+  - port: 80
+    targetPort: 8000
